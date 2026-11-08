@@ -28,6 +28,38 @@ function uniquePosts(posts: Post[]): Post[] {
   });
 }
 
+function normalizeSearchText(value: string): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[–—]/g, " ")
+    .replace(/[-_:;,.!?'"(){}\/\s]+/g, " ")
+    .trim();
+}
+
+function rankSearchPosts(posts: Post[], searchQuery: string): Post[] {
+  const query = normalizeSearchText(searchQuery);
+  if (!query) return posts;
+
+  const queryWords = query.split(" ");
+  return posts
+    .map((post, index) => {
+      const title = normalizeSearchText(post.title);
+      const phraseIndex = title.indexOf(query);
+      const matchedWords = queryWords.filter(word => title.includes(word)).length;
+      const score =
+        title === query
+          ? 0
+          : title.startsWith(query)
+            ? 1
+            : phraseIndex >= 0
+              ? 2 + phraseIndex / 10000
+              : 3 + (queryWords.length - matchedWords) / queryWords.length;
+      return { post, index, score };
+    })
+    .sort((a, b) => a.score - b.score || a.index - b.index)
+    .map(result => result.post);
+}
+
 function firstText(
   $: any,
   element: any,
@@ -269,9 +301,10 @@ export const getSearchPosts = async function ({
     const response = await axios.get(`${WP_API}/anime`, {
       params: {
         search: query,
+        search_columns: ["post_title"],
         per_page: PER_PAGE,
         page: Math.max(1, page || 1),
-        orderby: "date",
+        orderby: "relevance",
         order: "desc",
         _embed: "wp:featuredmedia",
       },
@@ -279,7 +312,7 @@ export const getSearchPosts = async function ({
       signal,
     });
     const data = Array.isArray(response.data) ? response.data : [];
-    return uniquePosts(data.map(mapAnime));
+    return rankSearchPosts(uniquePosts(data.map(mapAnime)), query);
   } catch (error: any) {
     if (error?.response?.status === 400) return [];
     throw error;

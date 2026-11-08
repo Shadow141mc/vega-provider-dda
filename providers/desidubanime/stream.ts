@@ -358,14 +358,42 @@ export const getStream = async function ({
     );
   }
 
-  // Vidmoly 16:9 masters usually expose the highest bitrate; keep it first so
-  // the app's quick play/download buttons pick the better quality.
+  const [preferredQualitySetting, preferredServerSetting] = await Promise.all([
+    providerContext.kvStore.get<string>("preferredQuality"),
+    providerContext.kvStore.get<string>("serverPreference"),
+  ]);
+  const preferredQuality = /^\d{3,4}$/.test(preferredQualitySetting || "")
+    ? Number(preferredQualitySetting)
+    : 0;
+  const preferredServer =
+    preferredServerSetting === "vidmoly" ||
+    preferredServerSetting === "streamruby"
+      ? preferredServerSetting
+      : "";
+
   streams.sort((a, b) => {
-    if (isDownload) {
-      const qualityA = parseInt(String(a.quality || ""), 10) || 0;
-      const qualityB = parseInt(String(b.quality || ""), 10) || 0;
-      if (qualityA !== qualityB) return qualityB - qualityA;
+    const qualityA = parseInt(String(a.quality || ""), 10) || 0;
+    const qualityB = parseInt(String(b.quality || ""), 10) || 0;
+
+    if (preferredQuality) {
+      const preferredA = qualityA === preferredQuality;
+      const preferredB = qualityB === preferredQuality;
+      if (preferredA !== preferredB) return preferredA ? -1 : 1;
     }
+
+    if (preferredServer) {
+      const rankPreferred = (stream: Stream) =>
+        stream.server.toLowerCase() === preferredServer ? 0 : 1;
+      const preferredRank = rankPreferred(a) - rankPreferred(b);
+      if (preferredRank) return preferredRank;
+    }
+
+    if (isDownload && qualityA !== qualityB) {
+      return qualityB - qualityA;
+    }
+
+    // Keep existing defaults: Vidmoly first for playback, and highest quality
+    // first for downloads (with Vidmoly as the tie-breaker).
     const rank = (stream: Stream) => (stream.server === "Vidmoly" ? 0 : 1);
     return rank(a) - rank(b);
   });
